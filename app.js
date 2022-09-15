@@ -1,6 +1,8 @@
 //jshint esversion:6
 require("dotenv").config();
 const md5 = require("md5");
+const fs = require("fs");
+const https = require("https");
 const session = require("express-session");
 const passport = require("passport");
 const passportLocalMongoose = require("passport-local-mongoose");
@@ -10,6 +12,7 @@ const app = express();
 const ejs = require("ejs");
 const mongoose = require("mongoose");
 const GoogleStrategy = require("passport-google-oauth20").Strategy;
+const FacebookStrategy = require("passport-facebook").Strategy;
 const findOrCreate = require("mongoose-findorcreate");
 
 // const bcrypt = require("bcrypt");
@@ -37,12 +40,33 @@ passport.use(
     {
       clientID: process.env.CLIENT_ID,
       clientSecret: process.env.CLIENT_SECRET,
-      callbackURL: "http://localhost:3000/auth/google/secret",
+      callbackURL: "https://localhost:3000/auth/google/secret",
     },
     function (accessToken, refreshToken, profile, cb) {
-      console.log(profile);
+      console.log(profile._json.email);
       User.findOrCreate(
-        { googleId: profile.id, username: profile.displayName },
+        { googleId: profile.id, username: profile._json.email },
+        function (err, user) {
+          return cb(err, user);
+        }
+      );
+    }
+  )
+);
+
+//Facebook auth
+passport.use(
+  new FacebookStrategy(
+    {
+      clientID: process.env.FACEBOOK_APP_ID,
+      clientSecret: process.env.FACEBOOK_APP_SECRET,
+      callbackURL: "https://localhost:3000/auth/facebook/secret",
+      profileFields: ["id", "emails", "name"],
+    },
+    function (accessToken, refreshToken, profile, cb) {
+      console.log(profile.emails[0].value);
+      User.findOrCreate(
+        { facebookId: profile.id, username: profile.emails[0].value },
         function (err, user) {
           return cb(err, user);
         }
@@ -62,6 +86,7 @@ const userSchema = new mongoose.Schema({
   username: String,
   password: String,
   googleId: String,
+  facebookId: String,
   secret: String, // added later when you want to add another doc to particular user like post
 });
 
@@ -186,12 +211,31 @@ app.get("/", function (req, res) {
 
 app.get(
   "/auth/google",
-  passport.authenticate("google", { scope: ["profile"] })
+  passport.authenticate("google", {
+    scope: [
+      "https://www.googleapis.com/auth/userinfo.profile",
+      "https://www.googleapis.com/auth/userinfo.email",
+    ],
+  })
 );
 
 app.get(
   "/auth/google/secret",
   passport.authenticate("google", { failureRedirect: "/login" }),
+  function (req, res) {
+    // Successful authentication, redirect home.
+    res.redirect("/secrets");
+  }
+);
+
+app.get(
+  "/auth/facebook",
+  passport.authenticate("facebook", { scope: ["email"] })
+);
+
+app.get(
+  "/auth/facebook/secret",
+  passport.authenticate("facebook", { failureRedirect: "/login" }),
   function (req, res) {
     // Successful authentication, redirect home.
     res.redirect("/secrets");
@@ -239,7 +283,10 @@ app.get("/submit", function (req, res) {
     res.redirect("/login");
   }
 });
-
-app.listen(process.env.PORT || 3000, function () {
-  console.log("Started eh?");
+const httpsOptions = {
+  key: fs.readFileSync("cert/key.pem"),
+  cert: fs.readFileSync("cert/cert.pem"),
+};
+const server = https.createServer(httpsOptions, app).listen(3000, () => {
+  console.log("server running at ");
 });
